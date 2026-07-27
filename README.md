@@ -1,9 +1,6 @@
 # WaterNode
 
-<!-- TODO: once this is pushed, add the CI badge by replacing USERNAME below
-     and uncommenting:
-[![tests](https://github.com/USERNAME/waternode/actions/workflows/tests.yml/badge.svg)](https://github.com/USERNAME/waternode/actions/workflows/tests.yml)
--->
+[![tests](https://github.com/JedidiahOla/Waternode/actions/workflows/tests.yml/badge.svg)](https://github.com/JedidiahOla/Waternode/actions/workflows/tests.yml)
 
 A low-cost water quality monitoring system built around a battery-powered
 ESP32 sensor node and a Flask backend.
@@ -18,11 +15,7 @@ Final year Electronic & Computer Engineering project, Dublin City University.
 Bench prototype, never field deployed. C++/Arduino firmware, Python backend,
 92 tests.
 
-<!-- TODO: replace this comment with the screenshot line below.
-     ![WaterNode dashboard](docs/dashboard.png)
-     To generate it: cd backend, then
-       python seed_db.py && python demo_alert.py && python app.py
-     and screenshot http://localhost:5000 -->
+![WaterNode dashboard](docs/dashboard.png)
 
 ## The problem
 
