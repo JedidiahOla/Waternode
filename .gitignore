@@ -1,0 +1,33 @@
+# Environment / secrets
+.env
+
+# SQLite database and its WAL/journal files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Arduino IDE / arduino-cli build output
+build/
+*.elf
+*.bin
+*.map
+*.hex
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WaterNode Dashboard - {{ node_id }}</title>
+<!-- Chart.js is vendored in static/vendor rather than pulled from a CDN, so
+     the dashboard works offline and on networks that block third-party CDNs.
+     MIT licensed, see static/vendor/chart.js-LICENSE.md -->
+<script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #121b2e;
+    --border: #223047;
+    --text: #e6ecf5;
+    --muted: #8a97ab;
+    --none: #2ecc71;
+    --watch: #f1c40f;
+    --warning: #e67e22;
+    --confirmed: #e74c3c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 0.9rem; }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .card .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .card .value { font-size: 1.6rem; font-weight: 600; margin-top: 4px; }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .status-pill .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 14px; }
+  .chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .chart-card h3 { margin: 0 0 10px; font-size: 0.95rem; color: var(--muted); font-weight: 500; }
+  canvas { max-height: 220px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  .faults { color: var(--warning); font-size: 0.85rem; margin-top: 8px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<h1>WaterNode Dashboard</h1>
+<p class="sub">Node <strong>{{ node_id }}</strong> &middot; refreshes every {{ poll_interval }}s &middot;
+  <span id="last-updated">loading...</span>
+</p>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Status</div>
+    <div class="value"><span id="status-pill" class="status-pill"><span class="dot"></span><span id="status-text">&mdash;</span></span></div>
+  </div>
+  <div class="card">
+    <div class="label">Turbidity</div>
+    <div class="value" id="turbidity-value">&mdash;</div>
+  </div>
+  <div class="card">
+    <div class="label">TDS</div>
+    <div class="value" id="tds-value">&mdash;</div>
+  </div>
+  <div class="card">
+    <div class="label">Temperature</div>
+    <div class="value" id="temp-value">&mdash;</div>
+  </div>
+  <div class="card">
+    <div class="label">Battery</div>
+    <div class="value" id="battery-value">&mdash;</div>
+  </div>
+  <div class="card">
+    <div class="label">Total readings</div>
+    <div class="value" id="total-value">&mdash;</div>
+  </div>
+</div>
+
+<div id="faults" class="faults"></div>
+
+<div class="charts" style="margin-top: 20px;">
+  <div class="chart-card">
+    <h3>Turbidity (NTU)</h3>
+    <canvas id="chart-turbidity"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>TDS (mg/L)</h3>
+    <canvas id="chart-tds"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Temperature (&deg;C)</h3>
+    <canvas id="chart-temp"></canvas>
+  </div>
+  <div class="chart-card">
+    <h3>Recent alerts</h3>
+    <table id="alerts-table">
+      <thead><tr><th>Time</th><th>Parameter</th><th>Score</th><th>SMS</th></tr></thead>
+      <tbody><tr><td colspan="4" class="muted">No alerts yet</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const NODE_ID = {{ node_id | tojson }};
+const POLL_INTERVAL_MS = {{ poll_interval }} * 1000;
+const API_KEY = {{ api_key | tojson }};
+
+function withAuth(url) {
+  if (!API_KEY) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}api_key=${encodeURIComponent(API_KEY)}`;
+}
+
+const STATUS_COLORS = { NONE: "var(--none)", WATCH: "var(--watch)",
+                         WARNING: "var(--warning)", CONFIRMED: "var(--confirmed)" };
+
+function makeChart(ctx, label, color) {
+  return new Chart(ctx, {
+    type: "line",
+    data: { labels: [], datasets: [{ label, data: [], borderColor: color,
+             backgroundColor: color + "33", tension: 0.25, pointRadius: 0 }] },
+    options: {
+      responsive: true,
+      animation: false,
+      scales: {
+        x: { ticks: { color: "#8a97ab", maxTicksLimit: 6 }, grid: { color: "#223047" } },
+        y: { ticks: { color: "#8a97ab" }, grid: { color: "#223047" } },
+      },
+      plugins: { legend: { display: false } },
+    },
+  });
+}
+
+// Chart.js is vendored locally, so this should always be true. Kept as a
+// guard anyway: a missing chart library shouldn't blank the whole page.
+const chartsAvailable = typeof Chart !== "undefined";
+
+let turbidityChart = null, tdsChart = null, tempChart = null;
+
+if (chartsAvailable) {
+  turbidityChart = makeChart(document.getElementById("chart-turbidity"), "Turbidity", "#3498db");
+  tdsChart = makeChart(document.getElementById("chart-tds"), "TDS", "#9b59b6");
+  tempChart = makeChart(document.getElementById("chart-temp"), "Temperature", "#e67e22");
+} else {
+  document.querySelectorAll("canvas").forEach(c => {
+    const note = document.createElement("p");
+    note.className = "muted";
+    note.textContent = "Chart.js failed to load, so charts are unavailable.";
+    c.replaceWith(note);
+  });
+}
+
+async function fetchJSON(url) {
+  const res = await fetch(withAuth(url));
+  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
+  return res.json();
+}
+
+async function refreshLatest() {
+  const data = await fetchJSON(`/api/latest?node_id=${NODE_ID}`);
+  if (data.status !== "ok") {
+    document.getElementById("status-text").textContent = "No data yet";
+    return;
+  }
+
+  document.getElementById("last-updated").textContent = `last reading: ${data.timestamp_fmt}`;
+  document.getElementById("status-text").textContent = data.alert_label;
+  document.getElementById("status-pill").querySelector(".dot").style.background =
+    STATUS_COLORS[data.alert_label] || "#888";
+
+  document.getElementById("turbidity-value").textContent =
+    data.readings.turbidity_ntu != null ? `${data.readings.turbidity_ntu.toFixed(2)} NTU` : "\u2014";
+  document.getElementById("tds-value").textContent =
+    data.readings.tds_mgl != null ? `${data.readings.tds_mgl.toFixed(1)} mg/L` : "\u2014";
+  document.getElementById("temp-value").textContent =
+    data.readings.temperature_c != null ? `${data.readings.temperature_c.toFixed(1)} \u00B0C` : "\u2014";
+  document.getElementById("battery-value").textContent =
+    data.readings.battery_mv != null ? `${(data.readings.battery_mv / 1000).toFixed(2)} V` : "\u2014";
+  document.getElementById("total-value").textContent = data.total_readings ?? "\u2014";
+
+  const faultsEl = document.getElementById("faults");
+  faultsEl.textContent = data.faults && data.faults.length
+    ? `Faults: ${data.faults.join(", ")}` : "";
+
+  const tbody = document.querySelector("#alerts-table tbody");
+  if (data.recent_alerts && data.recent_alerts.length) {
+    tbody.innerHTML = data.recent_alerts.map(a => `
+      <tr>
+        <td>${a.timestamp_fmt || ""}</td>
+        <td>${a.parameter}</td>
+        <td>${(a.cusum_score ?? 0).toFixed(2)}</td>
+        <td>${a.sms_sent ? "sent" : "\u2014"}</td>
+      </tr>`).join("");
+  } else {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted">No alerts yet</td></tr>`;
+  }
+}
+
+async function refreshHistory() {
+  if (!chartsAvailable) return;
+  const data = await fetchJSON(`/api/history?node_id=${NODE_ID}&hours=24`);
+
+  turbidityChart.data.labels = data.labels;
+  turbidityChart.data.datasets[0].data = data.turbidity;
+  turbidityChart.update();
+
+  tdsChart.data.labels = data.labels;
+  tdsChart.data.datasets[0].data = data.tds;
+  tdsChart.update();
+
+  tempChart.data.labels = data.labels;
+  tempChart.data.datasets[0].data = data.temperature;
+  tempChart.update();
+}
+
+async function refreshAll() {
+  try {
+    await Promise.all([refreshLatest(), refreshHistory()]);
+  } catch (err) {
+    // Say so on the page. Failing silently here just looks like an empty
+    // dashboard, which is indistinguishable from having no data.
+    console.error("Dashboard refresh failed:", err);
+    document.getElementById("last-updated").textContent =
+      `could not load data (${err.message})`;
+  }
+}
+
+refreshAll();
+setInterval(refreshAll, POLL_INTERVAL_MS);
+</script>
+
+</body>
+</html>
